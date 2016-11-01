@@ -41,18 +41,15 @@ ret <- sqlStoredProc(connection,
 
 # 3. determine a temp output table name (see createTable and gen_unique_table_name functions for reference ) and amend with exposure col
 getDepVarname <- function(fit) rownames(attr(terms(fit@formula),"factors"))[[1]]
-
 getObsIDColColname <- function(dataf) dataf@select@variables$obs_id_colname # getIndexSQLExpression(dataf,1)
-
 getTable <- function(dataf) dataf@select@table_name
-
 
 sqlSendUpdate(connection,paste0("alter table ",outWideTable," add exposure INTEGER"))
 sqlSendUpdate(connection,paste0("update a from ",outWideTable," a, ",getTable(dataf), " b\n",
                                 " set exposure=b.",getDepVarname(fit),"\n",
                                 " where a.",getObsIDColColname(fit@deeptable),"=b.",getObsIDColColname(dataf)))
 
-
+## Try to create a view instead of alter table
 
 # 4. call FLMatchit 
 ret <- sqlStoredProc(connection,
