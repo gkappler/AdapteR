@@ -15,108 +15,213 @@ NULL
 ## Assumptions: Always partition by Matrix_ID.
 ##              input arguments to udt are matrix
 
-constructMatrixUDTSQL <- function(pObject,
-                                  pFuncName,
-                                  pOutColnames=list(
-                                      rowIdColumn="row_id",
-                                      colIdColumn="col_id",
-                                      valueColumn="cell_val"),
-                                  pWhereConditions="",
-                                  pIncludeMID=TRUE,
-                                  ...){
+# constructMatrixUDTSQL <- function(pObject,
+#                                   pFuncName,
+#                                   pOutColnames=list(
+#                                       rowIdColumn="row_id",
+#                                       colIdColumn="col_id",
+#                                       valueColumn="cell_val"),
+#                                   pWhereConditions="",
+#                                   pIncludeMID=TRUE,
+#                                   ...){
 
-    ## Covers case when vector output is needed
-    if(pIncludeMID){
-        pOutColnames[["MATRIX_ID"]]="'%insertIDhere%'"
-    }
+#     # ## Covers case when vector output is needed
+#     # if(pIncludeMID){
+#     #     pOutColnames[["MATRIX_ID"]]="'%insertIDhere%'"
+#     # }
 
-    ## Ensure proper ordering for UDT especially
-    object <- orderVariables(object,
-                  c("MATRIX_ID","rowIdColumn","colIdColumn","valueColumn")
-              )
+#     # ## Ensure proper ordering for UDT especially
+#     # object <- orderVariables(object,
+#     #               c("MATRIX_ID","rowIdColumn","colIdColumn","valueColumn")
+#     #           )
 
-    return(constructUDTSQL( pViewColnames=c(MATRIX_ID="MATRIX_ID",
-                                            Row_ID="rowIdColumn",
-                                            Col_ID="colIdColumn",
-                                            Cell_Val="valueColumn"
-                                            ),
-                            pFuncName=pFuncName,
-                            pOutColnames=pOutColnames,
-                            pWhereConditions=pWhereConditions,
-                            pSelect=constructSelect(pObject)
-                        )
-        )
-}
+    
+# }
 
-constructUDTSQL <- function(pViewColnames,
-                            pFuncName,
-                            pOutColnames,
-                            pWhereConditions="",
-                            pSelect,
-                            pPartitionBy=names(pViewColnames)[1],
-                            pLocalOrderBy=names(pViewColnames)[1],
-                            ...){
-    if(is.TD()){
-        return(paste0("WITH z( ",paste0(names(pViewColnames),
-                                        collapse=","),
-                            " )",
-                       " AS ( SELECT ",paste0(pViewColnames,
-                                            collapse=","),
-                            " FROM ( ",pSelect," ) a ",
-                        " )",
-                       "SELECT ",constructVariables(pOutColnames),
-                       "FROM TABLE (",
-                            pFuncName,"(",paste0("z.",names(pViewColnames),
+setGeneric("constructMatrixUDTSQL",
+    function(pObject,
+            #pViewColnames,
+            pFuncName,
+            #pOutColnames,
+            pWhereConditions="",
+            pdims=getDimsSlot(pObject),
+            pdimnames=dimnames(pObject),
+            #pSelect,
+            #pPartitionBy=names(pViewColnames)[1],
+            #pLocalOrderBy=names(pViewColnames)[1],
+            ...){
+    standardGeneric("constructMatrixUDTSQL")
+    })
+
+# SELECT      partition1 MATRIX_ID,
+#      row_id rowIdColumn,
+#      col_id colIdColumn,
+#      matrix_inv valueColumn FROM FLMatrixInvUdt ( ON ( SELECT
+#      '%insertIDhere%' MATRIX_ID,
+#      mtrx.rowIdColumn rowIdColumn,
+#      mtrx.colIdColumn colIdColumn,
+#      mtrx.valueColumn valueColumn
+#  FROM phanitblMatrixMultiResult AS mtrx WHERE   (mtrx.MATRIX_ID=1)
+#  )  PARTITION BY MATRIX_ID TARGET ('rowIdColumn','colIdColumn','valueColumn')) a 
+
+## This query gives Error:- rowIdColumn column not found.
+## Aliases not recognized here!!
+## Also the columnNames specified in target have to be always lower case!.
+setMethod("constructMatrixUDTSQL",
+    signature(pObject="FLMatrix.TDAster"),
+    function(pObject,
+            pFuncName,
+            pWhereConditions="",
+            pdims=getDimsSlot(pObject),
+            pdimnames=dimnames(pObject),
+            ...){
+            vMap <- getMatrixUDTMapping(pFuncName)
+            pOutColnames <- names(vMap$argsPlatform)
+            names(pOutColnames) <- getDimColumnsSlot(pObject)
+            pOutColnames <- as.list(pOutColnames)
+            pSelect <- constructSelect(pObject)
+            pPartitionBy <- getDimColumnsSlot(pObject)[1]
+            pFuncName <- vMap$funcNamePlatform
+            if(is.null(pPartitionBy))
+                pPartitionBy <- 1
+            sqlstr <- paste0("SELECT ",constructVariables(pOutColnames),
+                      " FROM ",pFuncName,
+                            " ( ON ( ",pSelect," ) ",
+                            " PARTITION BY ",pPartitionBy,
+                            " TARGET (",paste0(fquote(tolower(c(getIndexSQLName(pObject),
+                                                getValueSQLName(pObject)))),
+                                                collapse=",")
+                            ,")) a ",
+                        constructWhere(pWhereConditions))
+
+            tblfunqueryobj <- new("FLTableFunctionQuery",
+                                connectionName = getFLConnectionName(),
+                                variables=pOutColnames,
+                                whereconditions="",
+                                order = "",
+                                SQLquery=sqlstr)
+
+            flm <- newFLMatrix(
+                     select= tblfunqueryobj,
+                     dims=pdims,
+                     Dimnames=pdimnames)
+        }
+    )
+
+
+setMethod("constructMatrixUDTSQL",
+    signature(pObject="FLMatrix.TD"),
+    function(pObject,
+            pFuncName,
+            pWhereConditions="",
+            pdims=getDimsSlot(pObject),
+            pdimnames=dimnames(pObject),
+            ...){
+            vMap <- getMatrixUDTMapping(pFuncName)
+            pOutColnames <- vMap$args
+            names(pOutColnames) <- getDimColumnsSlot(pObject)
+            pOutColnames <- as.list(pOutColnames)
+            pSelect <- constructSelect(pObject)
+            pViewColnames <- c("Matrix_ID","Row_ID","Col_ID","Num_Val")
+
+            sqlstr <- paste0("WITH z( ",paste0(pViewColnames,
+                                        collapse=",")," )",
+                            " AS ( ",pSelect," )",
+                            " SELECT ",constructVariables(pOutColnames),
+                            " FROM TABLE (",
+                                pFuncName,"(",paste0("z.",pViewColnames,
                                         collapse=","),
                                     ")",
-                            " HASH BY ",paste0("z.",pPartitionBy,
-                                            collapse=","),
-                            " LOCAL ORDER BY ",paste0("z.",pLocalOrderBy,
-                                            collapse=","),
-                            ") AS a ",
-                        constructWhere(pWhereConditions)
-                    )
-                )
-    }
-    ## if(names(getVariables(pObject))==pViewColnames)
-    ## Then do not nest
+                                " HASH BY z.",pViewColnames[1],
+                                " LOCAL ORDER BY ",paste0("z.",pViewColnames[1:3],
+                                                        collapse=","),
+                                ") AS a ",
+                            constructWhere(pWhereConditions)
+                        )
 
-    else if(is.Hadoop()){
-        return(paste0("SELECT ",constructVariables(pOutColnames),
-                      " FROM ",pFuncName,
-                            " ( ON ( SELECT ",constructVariables(pViewColnames),
-                                    " FROM ( ",pSelect," ) a ",
-                                " ) a ",
-                            " PARTITION BY ",paste0(pPartitionBy,
-                                            collapse=","),
-                                paste0("arg",1:length(pViewColnames),
-                                    "(",names(pViewColnames),")",
-                                    collapse=","
-                                    )
-                            ,") a ",
-                        constructWhere(pWhereConditions)
-                    )
-                )
-    }
+            tblfunqueryobj <- new("FLTableFunctionQuery",
+                                connectionName = getFLConnectionName(),
+                                variables=pOutColnames,
+                                whereconditions="",
+                                order = "",
+                                SQLquery=sqlstr)
 
-    else if(is.TDAster()){
-        return(paste0("SELECT ",constructVariables(pOutColnames),
-                      " FROM ",pFuncName,
-                            " ( ON ( SELECT ",constructVariables(pViewColnames),
-                                    " FROM ( ",pSelect," ) a ",
-                                " ) a ",
-                            " PARTITION BY ",paste0(pPartitionBy,
-                                            collapse=","),
-                            " TARGET (",paste0("'",setdiff(names(pViewColnames,
-                                                        pPartitionBy)),"'",
-                                                collapse=","
-                                            )
-                            ,")) a ",
-                        constructWhere(pWhereConditions)
-                    )
-                )
-    }
-}
+            flm <- newFLMatrix(
+                     select= tblfunqueryobj,
+                     dims=pdims,
+                     Dimnames=pdimnames)
+            flm
+        }
+    )
+# constructUDTSQL <- function(pViewColnames,
+#                             pFuncName,
+#                             pOutColnames,
+#                             pWhereConditions="",
+#                             pSelect,
+#                             pPartitionBy=names(pViewColnames)[1],
+#                             pLocalOrderBy=names(pViewColnames)[1],
+#                             ...){
+#     if(is.TD()){
+#         return(paste0("WITH z( ",paste0(names(pViewColnames),
+#                                         collapse=","),
+#                             " )",
+#                        " AS ( SELECT ",paste0(pViewColnames,
+#                                             collapse=","),
+#                             " FROM ( ",pSelect," ) a ",
+#                         " )",
+#                        "SELECT ",constructVariables(pOutColnames),
+#                        "FROM TABLE (",
+#                             pFuncName,"(",paste0("z.",names(pViewColnames),
+#                                         collapse=","),
+#                                     ")",
+#                             " HASH BY ",paste0("z.",pPartitionBy,
+#                                             collapse=","),
+#                             " LOCAL ORDER BY ",paste0("z.",pLocalOrderBy,
+#                                             collapse=","),
+#                             ") AS a ",
+#                         constructWhere(pWhereConditions)
+#                     )
+#                 )
+#     }
+#     ## if(names(getVariables(pObject))==pViewColnames)
+#     ## Then do not nest
+
+#     else if(is.Hadoop()){
+#         return(paste0("SELECT ",constructVariables(pOutColnames),
+#                       " FROM ",pFuncName,
+#                             " ( ON ( SELECT ",constructVariables(pViewColnames),
+#                                     " FROM ( ",pSelect," ) a ",
+#                                 " ) a ",
+#                             " PARTITION BY ",paste0(pPartitionBy,
+#                                             collapse=","),
+#                                 paste0("arg",1:length(pViewColnames),
+#                                     "(",names(pViewColnames),")",
+#                                     collapse=","
+#                                     )
+#                             ,") a ",
+#                         constructWhere(pWhereConditions)
+#                     )
+#                 )
+#     }
+
+#     else if(is.TDAster()){
+#         return(paste0("SELECT ",constructVariables(pOutColnames),
+#                       " FROM ",pFuncName,
+#                             " ( ON ( SELECT ",constructVariables(pViewColnames),
+#                                     " FROM ( ",pSelect," ) a ",
+#                                 " ) a ",
+#                             " PARTITION BY ",paste0(pPartitionBy,
+#                                             collapse=","),
+#                             " TARGET (",paste0("'",setdiff(names(pViewColnames,
+#                                                         pPartitionBy)),"'",
+#                                                 collapse=","
+#                                             )
+#                             ,")) a ",
+#                         constructWhere(pWhereConditions)
+#                     )
+#                 )
+#     }
+# }
 
 
 ############################## Stored Procs ###########################
@@ -127,92 +232,82 @@ constructStoredProcSQL <- function (pConnection,
     UseMethod("constructStoredProcSQL")
 }
 
-
-
 constructStoredProcSQL.FLConnection <- function(pConnection,
                                                 pFuncName,
                                                 pOutputParameter,
                                                 ...){
+    constructStoredProcSQL(getRConnection(pConnection),
+                           pFuncName,pOutputParameter,...)
+}
+constructStoredProcSQL.JDBCConnection <- function(pConnection,
+                                                pFuncName,
+                                                pOutputParameter,
+                                                ...){
+    args <- list(...)
+    pars <- rep("?",length(args))
+    names(pars) <- names(args)
+
+    pout <- rep("?",length(pOutputParameter))
+    names(pout) <- names(pOutputParameter)
+    result <- do.call("constructStoredProcSQL.default",
+                      append(
+                          list(pConnection=pConnection,
+                               pFuncName=pFuncName,
+                               pOutputParameter=pout),
+                          pars))
+    gsub("'\\?'","?",result)
+}
+constructStoredProcSQL.default <- function(pConnection,
+                                             pFuncName,
+                                             pOutputParameter,
+                                             ...){
     args <- list(...)
     if("pInputParams" %in% names(args))
         args <- args[["pInputParams"]]
     else if(length(args)==1 && is.list(args[[1]]))
         args <- args[[1]]
     ## Setting up input parameter value
-    pars <- character()
-    ## Construct input params 
-    ## NULL in TD == '' in others
-    ## gk: refactor conditionals to class methods
-    if(is.ODBC(pConnection) || is.character(pConnection)){
-        pars <- sapply(args,
-                    function(a){
-                        if(is.character(a)){
-                            if(a=="NULL"){
-                                if(is.TD())
-                                    return("NULL")
-                                else return("''")
-                            }
-                            else
-                                return(fquote(a))
-                        } 
-                        else return(a)
-                    })
-        # ai <- 1L
-        # for(a in unlist(args)){
-        #     if(is.character(a)){
-        #         if(a=="NULL"){
-        #             if(is.TD())
-        #             pars[ai] <- "NULL"
-        #             else pars[ai] <- "''"
-        #         }
-        #         else
-        #             pars[ai] <- fquote(a)
-        #     } else
-        #         pars[ai] <- a
-        #     ai <- ai+1L
-        # }
-    } else {
-        pars <- rep("?",length(args))
-        if(is.TD())
-            names(pOutputParameter)<-"?"
-    }
-
+    pars <- args
+    ## Construct input params
     names(pars) <- names(args)
+    output <- pOutputParameter
+    pars <- c(pars,getStoredProcMapping("extraPars"))
 
-    vCall <- c(TD="CALL ",
-                TDAster="SELECT * FROM ",
-                Hadoop="SELECT ")
-    vCall <- vCall[[getFLPlatform()]]
-    if(is.TDAster()){
-        pars <- c(pars,
-                DSN=fquote(getOption("DSN")))
-        return(paste0(vCall," ",pFuncName,
-                "( ON (SELECT 1 ) PARTITION BY 1 ",
-                    paste0(names(pars),"(",
-                            pars,")",
-                            collapse=" \n "),
-                    ")"
-                )
-        )
-    }
-    else
-    return(paste0(vCall," ",pFuncName,
-                    "(",
-                    paste0(pars,
-                            collapse=", \n "),
-                    ifelse(is.TD(),
-                        paste0(",",
-                            paste0(names(pOutputParameter), 
-                                collapse=", \n ")),
-                        ""),
-                    ")"
-                )
-        )
+    valMaps <- getStoredProcMapping("valueMapping")
+    if(is.null(valMaps)) valMaps <- list()
+    pars <- sapply(pars,
+                   function(a){
+        if(is.character(a)){
+            b <- valMaps[[a]]
+            if(!is.null(b))
+                a <- b
+            if(a!="NULL")
+                return(fquote(a))
+        }
+        else return(a)
+    })
+
+    if(getStoredProcMapping("withOutputPars"))
+        pars <- c(pars,output)
+
+    argNames <- getStoredProcMapping("withArgNames")
+    if(argNames=="()")
+        pars <- paste0(names(pars),"(",pars,")")
+    if(argNames=="=")
+        pars <- paste0(names(pars),argNames,pars)
+    argSep <- getStoredProcMapping("argSeparator")
+    if(is.null(argSep))
+        argSep <- ", \n "
+    return(paste0(getStoredProcMapping("prefix")," ",
+                  pFuncName,
+                  "(",
+                  getStoredProcMapping("preArgs"),
+                  paste0(pars, collapse=argSep),
+                  ")\n"
+                  ))
 }
 
-constructStoredProcSQL.character <- constructStoredProcSQL.FLConnection
-constructStoredProcSQL.RODBC <- constructStoredProcSQL.FLConnection
-constructStoredProcSQL.JDBCConnection <- constructStoredProcSQL.FLConnection
+
 ############################### Aggregates ############################
 ## should already work
 

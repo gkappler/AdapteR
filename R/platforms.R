@@ -31,7 +31,7 @@ setMethod("getFLConnection", signature(object = "missing"), function(object) get
 getFLConnectionName <- function(...) attr(getFLConnection(...),"name")
 
 ##' @export
-getFLPlatform <- function(connection=getFLConnection()) return(attr(getFLConnection(),"platform"))
+getFLPlatform <- function(connection=getFLConnection()) return(attr(connection,"platform"))
 is.TD         <- function(Connection=getFLConnection()) getFLPlatform()=="TD"
 is.TDAster    <- function(Connection=getFLConnection()) getFLPlatform()=="TDAster"
 is.Hadoop     <- function(Connection=getFLConnection()) getFLPlatform()=="Hadoop"
@@ -94,7 +94,7 @@ flConnect <- function(host=NULL,database=NULL,user=NULL,passwd=NULL,
                       jdbc.options="",# "TMODE=TERA,CHARSET=ASCII",
                       odbcSource=NULL,
                       driverClass=NULL,
-                      temporary=FALSE,
+                      temporary=TRUE,
                       verbose=FALSE,
                       tablePrefix=NULL,
                       ...){
@@ -104,6 +104,7 @@ flConnect <- function(host=NULL,database=NULL,user=NULL,passwd=NULL,
         tablePrefix <- genRandVarName()
     options(ResultDatabaseFL=database)
     options(FLUsername=user)
+    options(DSN=list(...)$DSN)
     connection <- NULL
 
     if(!is.null(host)){
@@ -221,7 +222,7 @@ flConnect <- function(host=NULL,database=NULL,user=NULL,passwd=NULL,
 FLStartSession <- function(connection,
                            database=getOption("ResultDatabaseFL"),
                            temporary=TRUE,
-                           drop=FALSE,
+                           drop=TRUE,
                            debug=FALSE,
                            tableoptions=NULL,
                            tablePrefix=NULL,
@@ -324,8 +325,140 @@ FLStartSession <- function(connection,
                     pTemporary=FALSE,
                     pDrop=FALSE)
     genSessionID()
+
+    FLcreatePlatformsMapping()
     cat("Session Started..\n")
 }
+
+parsePlatformMapping <- function(definition){
+    if(grepl("^ *$",definition)) return(NULL)
+    if(grepl("^ *#.*",definition)) return(NULL)
+    lhs <- gsub(" *<-.*","",definition)
+    rhs <- gsub(".*<- *","",definition)
+    lhsArgs <- gsub(".*\\(|\\).*","", lhs)
+    if(lhsArgs==lhs) lhsArgs <- ""
+    rhsArgs <- gsub(".*\\(|\\).*","", rhs)
+    if(rhsArgs==rhs) rhsArgs <- ""
+    ##
+    funNameFull <- gsub(" *\\(.*\\) *","",lhs)
+    funName <- gsub("\\..*","",funNameFull)
+    platform <- gsub("^.*\\.","",funNameFull)
+    storedProcPlatform <- gsub(" *\\(.*\\) *","",rhs)
+    args <- unlist(strsplit(lhsArgs," *, *"))
+    SargsPlatform <- unlist(strsplit(rhsArgs," *, *"))
+    argsPlatform <- sapply(strsplit(SargsPlatform," *= *"),
+                           function(x){
+        r <- x[[length(x)]]
+        names(r) <- x[[1]]
+        r
+    })
+    result <- list(funcName=funName,
+                   platform=platform,
+                   funcNamePlatform=storedProcPlatform,
+                   args=args,
+                   argsPlatform=argsPlatform)
+    return(result)
+}
+
+
+## gk: todo document
+getStoredProcMapping <- function(query) getOption("storedProcMappingsFL")[[paste0(query,".",getFLPlatform(connection=connection))]]
+
+#' Function to generate platforms mappings for stored procs and UDTs from definitions file.
+#'
+#' The definitions file has one definition per line
+#' <TD_FNAME>.<PLATFORM>(<TD_ARGS>) <- <PLATFORM_FNAME>(<PLATFORM_ARGS>)
+#' The definitions file for UDTs has one definition per line
+#' <TD_FNAME>.<PLATFORM>(<TD_OUTPUTCOLS>) <- <PLATFORM_FNAME>(<PLATFORM_OUTPUTCOLS>)
+# FLcreatePlatformMatrixUDTMapping <- function(definitions='data/platformMatrixUDT.RFL'){
+#     defs <- readLines(system.file(definitions, package='AdapteR'))
+
+    
+# }
+FLcreatePlatformsMapping <- function(definitions=c('data/platformStoredProcs.RFL',
+                                                    'data/platformMatrixUDT.RFL')){
+    defs <- readLines(system.file(definitions[1], package='AdapteR'))
+
+    storedProcMappings <- lapply(defs,
+                                parsePlatformMapping)
+    names(storedProcMappings) <- sapply(storedProcMappings,
+                                        function(x) paste0(x$funcName,".",x$platform))
+
+    storedProcMappings$prefix.TD="CALL "
+    storedProcMappings$prefix.TDAster="SELECT * FROM "
+    storedProcMappings$prefix.Hadoop="SELECT "
+
+
+    storedProcMappings$preArgs.TD=""
+    storedProcMappings$preArgs.TDAster="ON (SELECT 1 ) PARTITION BY 1 \n"
+    storedProcMappings$preArgs.Hadoop=""
+
+    storedProcMappings$extraPars.TD=c()
+    storedProcMappings$extraPars.TDAster=c(DSN=ifelse(is.null(getOption("DSN")),
+                                                    "NULL",
+                                                    getOption("DSN")))
+    storedProcMappings$extraPars.Hadoop=c()
+
+    storedProcMappings$withOutputPars.TD=TRUE
+    storedProcMappings$withOutputPars.TDAster=FALSE
+    storedProcMappings$withOutputPars.Hadoop=TRUE
+
+    storedProcMappings$withArgNames.TD="none"
+    storedProcMappings$withArgNames.TDAster="()"
+    storedProcMappings$argSeparator.TDAster="\n"
+    storedProcMappings$withArgNames.Hadoop="="
+
+
+    storedProcMappings$valueMapping.TDAster <- list("NULL"="")
+    storedProcMappings$valueMapping.Hadoop <- list("NULL"="")
+
+    options(storedProcMappingsFL=storedProcMappings)
+    defs <- readLines(system.file(definitions[2], package='AdapteR'))
+    
+    MatrixUDTMappings <- lapply(defs,
+                                parsePlatformMapping)
+    names(MatrixUDTMappings) <- sapply(MatrixUDTMappings,
+                                        function(x) 
+                                            paste0(x$funcName,".",x$platform))
+    options(MatrixUDTMappingsFL=MatrixUDTMappings)
+}
+
+# parsePlatformMatrixUDTMapping <- function(definition){
+#     browser()
+#     if(grepl("^ *$",definition)) return(NULL)
+#     if(grepl("^ *#.*",definition)) return(NULL)
+#     lhs <- gsub(" *<-.*","",definition)
+#     rhs <- gsub(".*<- *","",definition)
+#     lhsArgs <- gsub(".*\\(|\\).*","", lhs)
+#     if(lhsArgs==lhs) lhsArgs <- ""
+#     rhsArgs <- gsub(".*\\(|\\).*","", rhs)
+#     if(rhsArgs==rhs) rhsArgs <- ""
+#     ##
+#     funNameFull <- gsub(" *\\(.*\\) *","",lhs)
+#     funName <- gsub("\\..*","",funNameFull)
+#     platform <- gsub("^.*\\.","",funNameFull)
+#     storedProcPlatform <- gsub(" *\\(.*\\) *","",rhs)
+#     args <- unlist(strsplit(lhsArgs," *, *"))
+#     SargsPlatform <- unlist(strsplit(rhsArgs," *, *"))
+#     argsPlatform <- sapply(strsplit(SargsPlatform," *= *"),
+#                            function(x){
+#         r <- x[[length(x)]]
+#         names(r) <- x[[1]]
+#         r
+#     })
+#     result <- list(storedProc=funName,
+#                    platform=platform,
+#                    storedProcPlatform=storedProcPlatform,
+#                    args=args,
+#                    argsPlatform=argsPlatform)
+#     return(result)
+# }
+
+
+## gk: todo document
+getMatrixUDTMapping <- function(query) 
+    getOption("MatrixUDTMappingsFL")[[paste0(query,".",getFLPlatform(connection=connection))]]
+
 
 genCreateResulttbl <- function(tablename,
                                temporaryTable=TRUE,
